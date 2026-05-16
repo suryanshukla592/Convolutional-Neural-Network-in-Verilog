@@ -1,21 +1,23 @@
 `timescale 1ns / 1ps
-module Convulation#(parameter SIZE=8)
+module Convulation#(parameter SIZE=8, FRAC_BITS=8)
 (
-input clk,
-input reset,
-// the window may not be ready at the start of conv., pixel data would be wrong.
-input pixel_valid_in,//input form window is correct
-input [SIZE-1:0]p0,p1,p2,p3,p4,p5,p6,p7,p8,
-input signed [SIZE-1:0]w0,w1,w2,w3,w4,w5,w6,w7,w8,
-input signed [SIZE-1:0] bias,
-output reg [SIZE-1:0]out,// new pixel size
-output reg valid_out
+    input clk,
+    input reset,
+    // the window may not be ready at the start of conv., pixel data would be wrong.
+    input pixel_valid_in,//input form window is correct
+    input [SIZE-1:0]p0,p1,p2,p3,p4,p5,p6,p7,p8,
+    input signed [SIZE-1:0]w0,w1,w2,w3,w4,w5,w6,w7,w8,
+    input signed [SIZE-1:0] bias,
+    output reg [SIZE-1:0]out,// new pixel size
+    output reg valid_out
     );
+wire signed [23:0] shifted_sum;
 // +4 bits, since on addition of 9 such numbers, r_net will overflow
-reg signed [2*SIZE-1+4:0]r_sum,sum0, sum1, sum2;
+reg signed [23:0]r_sum,sum0, sum1, sum2;
 reg valid_stage0, valid_stage1,valid_stage2;
-reg signed [2*SIZE-1:0]r0,r1,r2,r3,r4,r5,r6,r7,r8;
+reg signed [23:0]r0,r1,r2,r3,r4,r5,r6,r7,r8;
 //stage0: Multiplication
+//Increase bias_reg bit-width to match the product width
 reg signed [SIZE-1:0] bias_reg;// bias acts as the sensitivity dial for the filter
 always @(posedge clk)
 begin
@@ -48,7 +50,7 @@ begin
     else begin
         sum0<=r0+r1+r2;
         sum1<=r3+r4+r5;
-        sum2<=r6+r7+r8+bias_reg;
+        sum2<=r6+r7+r8;
         valid_stage1<=valid_stage0;
     end
 end
@@ -63,6 +65,7 @@ begin
     end
 end
 // stage2: ReLu and saturation
+assign shifted_sum = (r_sum >>> FRAC_BITS)+bias_reg; //Divide by 256 to fix the scale!
 always @(posedge clk)
 begin
     if(!reset) begin
@@ -72,9 +75,9 @@ begin
     else begin
         valid_out<=valid_stage2;
         if(valid_stage2) begin
-            if(r_sum[2*SIZE+3]==1) out<=0; // ReLu, r_net is negative
-            else if(|r_sum[2*SIZE+3:SIZE]) out<={SIZE{1'b1}};//number is big
-            else out<=r_sum[SIZE-1:0];
+            if(shifted_sum[23]==1) out<=0; // ReLu, r_net is negative
+            else if(|shifted_sum[23:SIZE]) out<={SIZE{1'b1}};//number is big
+            else out<=shifted_sum[SIZE-1:0];
         end
     end
 end
